@@ -87,9 +87,11 @@ class YOLOCropApp:
 
         # Video related
         self.video_handler = None
+        self.vlc_player = None
         self.is_video_mode = False
         self.video_playback_id = None
         self.is_playing = False
+        self.use_vlc = True  # Use VLC for smooth playback
 
         self._setup_styles()
         self._create_ui()
@@ -125,11 +127,16 @@ class YOLOCropApp:
         self.canvas_frame = ttk.Frame(self.main_frame, style='Dark.TFrame')
         self.canvas_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
+        # Image canvas (for images and video frames)
         self.crop_canvas = CropCanvas(
             self.canvas_frame,
             on_crop_change=self._on_crop_change
         )
         self.crop_canvas.pack(fill=tk.BOTH, expand=True)
+
+        # Video frame container for VLC embedding
+        self.video_frame = tk.Frame(self.canvas_frame, bg='#000000')
+        # Don't pack yet - will be shown when video mode is active
 
         self.statusbar = ttk.Frame(self.root, style='Toolbar.TFrame', height=30)
         self.statusbar.pack(side=tk.BOTTOM, fill=tk.X)
@@ -917,10 +924,13 @@ class YOLOCropApp:
         # 停止影片播放
         self._stop_video_playback()
 
-        # 關閉影片
+        # 關閉影片 (both OpenCV and VLC)
         if self.video_handler:
             self.video_handler.close()
             self.video_handler = None
+        if self.vlc_player:
+            self.vlc_player.close()
+            self.vlc_player = None
 
         self.is_video_mode = False
 
@@ -980,48 +990,128 @@ class YOLOCropApp:
         return self._load_video(video_path)
 
     def _load_video(self, video_path):
-        if self.video_handler:
-            self.video_handler.close()
+        try:
+            # Close existing video handler
+            if self.video_handler:
+                self.video_handler.close()
+                self.video_handler = None
+            if self.vlc_player:
+                self.vlc_player.close()
+                self.vlc_player = None
             self._stop_video_playback()
 
-        self.video_handler = utils.VideoHandler()
-        success, message = self.video_handler.open(video_path)
+            # Try VLC first, fall back to OpenCV if VLC fails
+            if self.use_vlc:
+                try:
+                    self.vlc_player = utils.VLCVideoPlayer(self.video_frame)
+                    success, message = self.vlc_player.open(video_path)
+                    if not success:
+                        raise Exception(message)
+                except Exception as vlc_error:
+                    print(f"VLC failed: {vlc_error}, falling back to OpenCV")
+                    self.use_vlc = False
+                    self.vlc_player = None
 
-        if not success:
-            utils.show_error('錯誤', message, parent=self.root, play_sound=self.settings.get('notification_sound', True))
+            # Fall back to OpenCV if VLC not available
+            if not self.use_vlc or self.vlc_player is None:
+                self.video_handler = utils.VideoHandler()
+                success, message = self.video_handler.open(video_path)
+                if not success:
+                    utils.show_error('錯誤', message, parent=self.root, play_sound=self.settings.get('notification_sound', True))
+                    return False
+                frame = self.video_handler.get_current_frame_as_pil()
+                if frame:
+                    self.crop_canvas.set_image_from_pil(frame)
+                    width = int(self.width_var.get())
+                    height = int(self.height_var.get())
+                    self.crop_canvas.set_crop_size(width, height)
+
+            self.is_video_mode = True
+            self.current_image_path = video_path
+            self._show_video_controls()
+
+            # For VLC, we need to embed the player after a brief delay
+            if self.use_vlc and self.vlc_player:
+                self.root.after(100, self._embed_vlc_player)
+
+            self._update_video_label()
+            self._update_status(f'已載入影片: {os.path.basename(video_path)}')
+            self._update_size_label()
+            return True
+
+        except Exception as e:
+            utils.show_error('錯誤', f'載入影片失敗: {str(e)}', parent=self.root, play_sound=self.settings.get('notification_sound', True))
             return False
 
-        self.is_video_mode = True
-        self.current_image_path = video_path
+    def _embed_vlc_player(self):
+        """嵌入 VLC 播放器到 Tkinter 視窗"""
+        if not self.vlc_player or not self.use_vlc:
+            return
 
-        frame = self.video_handler.get_current_frame_as_pil()
-        if frame:
-            self.crop_canvas.set_image_from_pil(frame)
-            width = int(self.width_var.get())
-            height = int(self.height_var.get())
-            self.crop_canvas.set_crop_size(width, height)
+        # Hide image canvas, show video frame
+        self.crop_canvas.pack_forget()
+        self.video_frame.pack(fill=tk.BOTH, expand=True)
 
-        self._show_video_controls()
-        self._update_video_label()
-        self._update_status(f'已載入影片: {os.path.basename(video_path)}')
-        self._update_size_label()
-        return True
+        # Force frame to update
+        self.video_frame.update_idletasks()
+
+        # Get the window handle
+        hwnd = self.video_frame.winfo_id()
+
+        # Set the VLC output window
+        self.vlc_player.player.set_hwnd(hwnd)
+
+        # Start playing
+        self.vlc_player.play()
+        self.is_playing = True
+        self.btn_video_play.config(text='⏸')
+
+        # Update position display
+        self._update_vlc_position()
 
     def _show_video_controls(self):
         self.video_control_frame.pack(side=tk.LEFT, padx=(30, 5))
-        self.btn_prev.pack_forget()
-        self.nav_label.pack_forget()
-        self.btn_next.pack_forget()
-        self.btn_prev = None
-        self.btn_next = None
+        if self.btn_prev:
+            self.btn_prev.pack_forget()
+        if self.nav_label:
+            self.nav_label.pack_forget()
+        if self.btn_next:
+            self.btn_next.pack_forget()
 
     def _hide_video_controls(self):
         self.video_control_frame.pack_forget()
-        self.btn_prev.pack(side=tk.LEFT, padx=5)
-        self.nav_label.pack(side=tk.LEFT, padx=5)
-        self.btn_next.pack(side=tk.LEFT, padx=5)
+
+        # Show video frame
+        if self.video_frame and self.video_frame.winfo_ismapped():
+            self.video_frame.pack_forget()
+
+        # Show image canvas again
+        self.crop_canvas.pack(fill=tk.BOTH, expand=True)
+
+        if self.btn_prev:
+            self.btn_prev.pack(side=tk.LEFT, padx=5)
+        if self.nav_label:
+            self.nav_label.pack(side=tk.LEFT, padx=5)
+        if self.btn_next:
+            self.btn_next.pack(side=tk.LEFT, padx=5)
 
     def _update_video_label(self):
+        # Try VLC first
+        if self.use_vlc and self.vlc_player and self.vlc_player.player:
+            try:
+                length = self.vlc_player.get_length()
+                current_time = self.vlc_player.get_time()
+                fps = self.vlc_player.get_fps()
+
+                if length > 0 and fps > 0:
+                    total_frames = int(length / 1000 * fps)
+                    current_frame = int(current_time / 1000 * fps) + 1
+                    self.video_frame_label.config(text=f'第 {current_frame} / {total_frames} 幀 | {fps:.2f} FPS')
+                    return
+            except:
+                pass
+
+        # Fall back to OpenCV
         if self.video_handler and self.video_handler.is_opened():
             current = self.video_handler.get_frame_number() + 1
             total = self.video_handler.get_total_frames()
@@ -1030,7 +1120,38 @@ class YOLOCropApp:
         else:
             self.video_frame_label.config(text='')
 
+    def _update_vlc_position(self):
+        """定時更新 VLC 播放位置"""
+        if not self.use_vlc or not self.vlc_player or not self.is_video_mode:
+            return
+
+        if self.vlc_player.player and self.vlc_player.player.is_playing():
+            self._update_video_label()
+            # Continue updating
+            self.video_playback_id = self.root.after(500, self._update_vlc_position)
+
     def video_prev_frame(self):
+        # Try VLC first
+        if self.use_vlc and self.vlc_player and self.vlc_player.player:
+            try:
+                current_pos = self.vlc_player.get_position()
+                fps = self.vlc_player.get_fps()
+
+                # Seek back about 1 second (or 1 frame)
+                if fps > 0:
+                    frame_duration = 1.0 / fps
+                    new_pos = max(0, current_pos - frame_duration)
+                    self.vlc_player.seek(new_pos)
+
+                    # Capture frame for cropping
+                    self._capture_vlc_frame()
+                    self._update_video_label()
+                    self._update_status('已跳至上一幀')
+                    return
+            except:
+                pass
+
+        # Fall back to OpenCV
         if self.video_handler and self.video_handler.is_opened():
             frame = self.video_handler.prev_frame()
             if frame:
@@ -1039,6 +1160,28 @@ class YOLOCropApp:
                 self._update_status(f'已跳至第 {self.video_handler.get_frame_number() + 1} 幀')
 
     def video_next_frame(self):
+        # Try VLC first
+        if self.use_vlc and self.vlc_player and self.vlc_player.player:
+            try:
+                current_pos = self.vlc_player.get_position()
+                length = self.vlc_player.get_length()
+                fps = self.vlc_player.get_fps()
+
+                # Seek forward about 1 second (or 1 frame)
+                if fps > 0:
+                    frame_duration = 1.0 / fps
+                    new_pos = min(1.0, current_pos + frame_duration)
+                    self.vlc_player.seek(new_pos)
+
+                    # Capture frame for cropping
+                    self._capture_vlc_frame()
+                    self._update_video_label()
+                    self._update_status('已跳至下一幀')
+                    return
+            except:
+                pass
+
+        # Fall back to OpenCV
         if self.video_handler and self.video_handler.is_opened():
             frame = self.video_handler.next_frame()
             if frame:
@@ -1046,7 +1189,37 @@ class YOLOCropApp:
                 self._update_video_label()
                 self._update_status(f'已跳至第 {self.video_handler.get_frame_number() + 1} 幀')
 
+    def _capture_vlc_frame(self):
+        """從 VLC 目前的播放位置擷取幀用於裁剪"""
+        if not self.use_vlc or not self.vlc_player:
+            return
+
+        try:
+            current_time = self.vlc_player.get_time()
+            frame = self.vlc_player.get_frame_at_time(current_time)
+            if frame:
+                self.crop_canvas.set_image_from_pil(frame)
+                width = int(self.width_var.get())
+                height = int(self.height_var.get())
+                self.crop_canvas.set_crop_size(width, height)
+        except Exception as e:
+            print(f"Failed to capture frame: {e}")
+
     def video_toggle_play(self):
+        # Try VLC first
+        if self.use_vlc and self.vlc_player and self.vlc_player.player:
+            try:
+                self.vlc_player.toggle_play()
+                self.is_playing = self.vlc_player.is_playing_state()
+                self.btn_video_play.config(text='⏸' if self.is_playing else '▶')
+
+                if self.is_playing:
+                    self._update_vlc_position()
+                return
+            except:
+                pass
+
+        # Fall back to OpenCV
         if not self.video_handler or not self.video_handler.is_opened():
             return
 
@@ -1056,6 +1229,18 @@ class YOLOCropApp:
             self._start_video_playback()
 
     def _start_video_playback(self):
+        # Try VLC first
+        if self.use_vlc and self.vlc_player and self.vlc_player.player:
+            try:
+                self.vlc_player.play()
+                self.is_playing = True
+                self.btn_video_play.config(text='⏸')
+                self._update_vlc_position()
+                return
+            except:
+                pass
+
+        # Fall back to OpenCV
         if not self.video_handler or not self.video_handler.is_opened():
             return
 
@@ -1085,16 +1270,47 @@ class YOLOCropApp:
     def _stop_video_playback(self):
         self.is_playing = False
         self.btn_video_play.config(text='▶')
+
+        # Stop VLC if active
+        if self.use_vlc and self.vlc_player:
+            try:
+                self.vlc_player.pause()
+            except:
+                pass
+
         if self.video_playback_id:
             self.root.after_cancel(self.video_playback_id)
             self.video_playback_id = None
 
     def generate_video_filename(self, extension='.png'):
-        if not self.video_handler or not self.video_handler.video_path:
+        video_path = None
+
+        # Try VLC first
+        if self.use_vlc and self.vlc_player:
+            video_path = self.vlc_player.video_path
+
+        # Fall back to OpenCV
+        if not video_path and self.video_handler:
+            video_path = self.video_handler.video_path
+
+        if not video_path:
             return self.generate_auto_filename(extension)
 
-        video_name = os.path.splitext(os.path.basename(self.video_handler.video_path))[0]
-        frame_num = self.video_handler.get_frame_number()
+        video_name = os.path.splitext(os.path.basename(video_path))[0]
+
+        # Get current frame number
+        frame_num = 0
+        if self.use_vlc and self.vlc_player and self.vlc_player.player:
+            try:
+                current_time = self.vlc_player.get_time()
+                fps = self.vlc_player.get_fps()
+                if fps > 0:
+                    frame_num = int(current_time / 1000 * fps)
+            except:
+                pass
+        elif self.video_handler:
+            frame_num = self.video_handler.get_frame_number()
+
         frame_str = f'{frame_num:04d}'
 
         filename = f'{video_name}_frame_{frame_str}{extension}'

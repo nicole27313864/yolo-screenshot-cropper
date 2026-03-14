@@ -350,3 +350,138 @@ class VideoHandler:
         self.fps = 0
         self.current_frame = 0
         self.frame_cache = {}
+
+
+class VLCVideoPlayer:
+    """VLC 嵌入播放器 - 使用硬體加速，流暢播放"""
+
+    def __init__(self, parent_window):
+        self.parent = parent_window
+        self.instance = None
+        self.player = None
+        self.media = None
+        self.video_path = None
+        self.is_playing = False
+
+    def open(self, video_path):
+        try:
+            import vlc
+            self.video_path = video_path
+
+            # 建立 VLC instance
+            self.instance = vlc.Instance()
+            self.player = self.instance.media_player_new()
+
+            # 建立 media 並載入
+            self.media = self.instance.media_new(video_path)
+            self.player.set_media(self.media)
+
+            return True, f"已載入: {os.path.basename(video_path)}"
+        except Exception as e:
+            return False, f"VLC 載入失敗: {str(e)}\n請確認已安裝 VLC 播放器"
+
+    def get_hwnd(self):
+        """取得視窗 handle 用於嵌入"""
+        if self.player:
+            return self.player.get_hwnd()
+        return None
+
+    def play(self):
+        if self.player:
+            self.player.play()
+            self.is_playing = True
+
+    def pause(self):
+        if self.player:
+            self.player.pause()
+            self.is_playing = False
+
+    def toggle_play(self):
+        if self.player:
+            if self.is_playing:
+                self.pause()
+            else:
+                self.play()
+
+    def stop(self):
+        if self.player:
+            self.player.stop()
+            self.is_playing = False
+
+    def seek(self, position):
+        """跳轉到指定位置 (0.0 - 1.0)"""
+        if self.player:
+            self.player.set_position(position)
+
+    def get_position(self):
+        """取得目前播放位置 (0.0 - 1.0)"""
+        if self.player:
+            return self.player.get_position()
+        return 0.0
+
+    def get_time(self):
+        """取得目前時間 (毫秒)"""
+        if self.player:
+            return self.player.get_time()
+        return 0
+
+    def set_time(self, time_ms):
+        """設定目前時間 (毫秒)"""
+        if self.player:
+            self.player.set_time(time_ms)
+
+    def get_length(self):
+        """取得影片長度 (毫秒)"""
+        if self.player:
+            return self.player.get_length()
+        return 0
+
+    def get_fps(self):
+        """取得 FPS"""
+        if self.player:
+            return self.player.get_fps()
+        return 0
+
+    def is_playing_state(self):
+        if self.player:
+            return self.player.is_playing()
+        return False
+
+    def get_frame_at_time(self, time_ms):
+        """取得指定時間的幀 (用於裁剪)"""
+        try:
+            import cv2
+            if not self.video_path:
+                return None
+
+            cap = cv2.VideoCapture(self.video_path)
+            if not cap.isOpened():
+                return None
+
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            if fps <= 0:
+                fps = 30
+
+            frame_number = int(time_ms / 1000 * fps)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+
+            ret, frame = cap.read()
+            cap.release()
+
+            if ret:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                return Image.fromarray(frame)
+            return None
+        except Exception:
+            return None
+
+    def close(self):
+        if self.player:
+            self.player.stop()
+            self.player = None
+        if self.instance:
+            self.instance.release()
+            self.instance = None
+        self.media = None
+        self.video_path = None
+        self.is_playing = False
