@@ -5,5 +5,6 @@
   "output_directory": "C:/Users/User/Desktop/TEST",
   "crop_width": 640,
   "crop_height": 640,
-  "notification_sound": true
+  "notification_sound": true,
+  "video_hardware_acceleration": true
 }

@@ -29,7 +29,8 @@ class Settings:
         'output_directory': '',
         'crop_width': 640,
         'crop_height': 640,
-        'notification_sound': True
+        'notification_sound': True,
+        'video_hardware_acceleration': False
     }
 
     def __init__(self):
@@ -85,13 +86,15 @@ class YOLOCropApp:
         self.current_folder_index = -1
         self.current_image_from_folder = None
 
-        # Video related
+        # 影片相關
         self.video_handler = None
         self.vlc_player = None
         self.is_video_mode = False
         self.video_playback_id = None
         self.is_playing = False
-        self.use_vlc = True  # Use VLC for smooth playback
+        self.use_vlc = True  # 使用 VLC 進行流暢播放
+        self.is_dragging_slider = False  # 滑塊拖動狀態
+        self._slider_was_playing = False  # 滑塊拖動前的播放狀態
 
         self._setup_styles()
         self._create_ui()
@@ -127,14 +130,14 @@ class YOLOCropApp:
         self.canvas_frame = ttk.Frame(self.main_frame, style='Dark.TFrame')
         self.canvas_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Image canvas (for images and video frames)
+        # 圖片畫布（用於圖片和影片幀）
         self.crop_canvas = CropCanvas(
             self.canvas_frame,
             on_crop_change=self._on_crop_change
         )
         self.crop_canvas.pack(fill=tk.BOTH, expand=True)
 
-        # Video frame container for VLC embedding
+        # 影片帧容器（用于 VLC 嵌入）
         self.video_frame = tk.Frame(self.canvas_frame, bg='#000000')
         # Don't pack yet - will be shown when video mode is active
 
@@ -352,10 +355,10 @@ class YOLOCropApp:
         )
         self.btn_next.pack(side=tk.LEFT, padx=5)
 
-        # Video control frame
+        # 影片控制框架
         self.video_control_frame = tk.Frame(self.nav_frame, bg='#2D2D2D')
         self.video_control_frame.pack(side=tk.LEFT, padx=(30, 5))
-        self.video_control_frame.pack_forget()  # Hidden by default
+        self.video_control_frame.pack_forget()  # 預設隱藏
 
         self.btn_video_prev = tk.Button(
             self.video_control_frame,
@@ -408,6 +411,40 @@ class YOLOCropApp:
         )
         self.video_frame_label.pack(side=tk.LEFT, padx=5)
 
+        # 時間軌道（slider）
+        self.video_slider = tk.Scale(
+            self.video_control_frame,
+            from_=0,
+            to=100,
+            orient=tk.HORIZONTAL,
+            length=800,
+            showvalue=False,
+            bg='#2D2D2D',
+            fg='#FFFFFF',
+            troughcolor='#3B3B3B',
+            highlightthickness=0,
+            command=self._on_video_slider_change
+        )
+        self.video_slider.pack(side=tk.LEFT, padx=5)
+        self.video_slider.pack_forget()  # 預設隱藏
+
+        # 綁定滑塊釋放事件，處理拖動結束時的跳轉
+        self.video_slider.bind('<ButtonRelease-1>', self._on_slider_drag_end)
+
+        # 時間顯示標籤
+        self.video_time_label = tk.Label(
+            self.video_control_frame,
+            text='',
+            bg='#2D2D2D',
+            fg='#FFFFFF',
+            padx=10
+        )
+        self.video_time_label.pack(side=tk.LEFT, padx=5)
+        self.video_time_label.pack_forget()  # 預設隱藏
+
+        # 標記滑塊是否正在被拖動（避免拖動時觸發自動更新）
+        self.is_dragging_slider = False
+
     def _load_settings_to_ui(self):
         self.output_var.set(self.output_directory)
         self.width_var.set(str(self.settings.get('crop_width', 640)))
@@ -422,7 +459,7 @@ class YOLOCropApp:
         self.root.bind('<Control-S>', lambda e: self.save_cropped())
         self.root.bind('<Return>', lambda e: self.save_cropped())
 
-        # Arrow keys - handle both image folder and video navigation
+        # 方向鍵 - 處理圖片資料夾和影片導航
         self.root.bind('<Left>', lambda e: self._handle_left_key())
         self.root.bind('<Right>', lambda e: self._handle_right_key())
         self.root.bind('<space>', lambda e: self._handle_space_key())
@@ -528,7 +565,7 @@ class YOLOCropApp:
 
         if success:
             self.current_image_path = filepath
-            # 保存時覆蓋當前檔案
+            # 保存時覆蓋目前檔案
             self.last_saved_path = filepath
             if from_folder:
                 self.current_image_from_folder = filepath
@@ -636,8 +673,8 @@ class YOLOCropApp:
     def show_settings(self):
         settings_window = tk.Toplevel(self.root)
         settings_window.title('設定')
-        settings_window.geometry('400x480')
-        self._center_window(settings_window, 400, 480)
+        settings_window.geometry('400x550')
+        self._center_window(settings_window, 400, 550)
         settings_window.configure(bg='#1A1A1A')
         settings_window.transient(self.root)
         settings_window.grab_set()
@@ -690,6 +727,20 @@ class YOLOCropApp:
         )
         sound_check.pack(anchor=tk.W, pady=10)
 
+        hw_accel_var = tk.BooleanVar(value=self.settings.get('video_hardware_acceleration', False))
+        hw_accel_check = tk.Checkbutton(
+            frame,
+            text='影片硬體加速 (使用顯示卡解碼)',
+            variable=hw_accel_var,
+            bg='#1A1A1A',
+            fg='#FFFFFF',
+            selectcolor='#2D2D2D',
+            activebackground='#1A1A1A',
+            activeforeground='#FFFFFF'
+        )
+        hw_accel_check.pack(anchor=tk.W, pady=10)
+        tk.Label(frame, text='建議: 大影片開啟可提升效能，小影片建議關閉', bg='#1A1A1A', fg='#A0A0A0', font=('Arial', 8)).pack(anchor=tk.W)
+
         tk.Label(frame, text='預設裁剪尺寸:', bg='#1A1A1A', fg='#FFFFFF').pack(anchor=tk.W, pady=(15, 5))
 
         default_size_frame = tk.Frame(frame, bg='#1A1A1A')
@@ -706,10 +757,14 @@ class YOLOCropApp:
         default_height_entry.pack(side=tk.LEFT, padx=5)
 
         def save_settings():
+            old_hw_accel = self.settings.get('video_hardware_acceleration', False)
+            new_hw_accel = hw_accel_var.get()
+
             self.settings.set('auto_naming', auto_naming_var.get())
             self.settings.set('auto_naming_format', format_var.get())
             self.settings.set('dont_ask_overwrite', dont_ask_var.get())
             self.settings.set('notification_sound', sound_var.get())
+            self.settings.set('video_hardware_acceleration', new_hw_accel)
             try:
                 self.settings.set('crop_width', int(default_width_var.get()))
                 self.settings.set('crop_height', int(default_height_var.get()))
@@ -717,7 +772,15 @@ class YOLOCropApp:
                 pass
             self._load_settings_to_ui()
             settings_window.destroy()
-            utils.show_info('設定', '設定已保存', parent=self.root, play_sound=self.settings.get('notification_sound', True))
+
+            # 硬體加速設置改變時提示重啟
+            if old_hw_accel != new_hw_accel:
+                msg = "硬體加速設置已更改，需要重新啟動程式才能生效。"
+                if new_hw_accel:
+                    msg += "\n\n開啟硬體加速可提升大影片的解碼速度。"
+                utils.show_info('設定', msg, parent=self.root, play_sound=self.settings.get('notification_sound', True))
+            else:
+                utils.show_info('設定', '設定已保存', parent=self.root, play_sound=self.settings.get('notification_sound', True))
 
         btn_frame = ttk.Frame(frame, style='Dark.TFrame')
         btn_frame.pack(pady=20)
@@ -970,6 +1033,67 @@ class YOLOCropApp:
         if self.is_video_mode:
             self.video_toggle_play()
 
+    def _on_video_slider_change(self, value):
+        """處理時間軌道滑塊的變化（拖動時更新UI，釋放時跳轉）"""
+        if not self.is_video_mode:
+            return
+
+        self.is_dragging_slider = True
+
+        # 如果正在播放，停止定時更新以避免衝突
+        # 保存目前播放狀態，拖動結束後根據此狀態恢復
+        self._slider_was_playing = self.is_playing
+        if self.use_vlc:
+            self._stop_vlc_position_update()
+
+        # 拖動時只更新 UI 顯示目前位置，不立即跳轉視頻
+        # 實際的視頻跳轉在 _on_slider_drag_end 中處理
+
+    def _on_slider_drag_end(self, event):
+        """滑塊拖動結束時執行跳轉"""
+        if not self.is_video_mode:
+            return
+
+        try:
+            slider_value = self.video_slider.get()
+
+            # 先嘗試 VLC
+            if self.use_vlc and self.vlc_player and self.vlc_player.player:
+                try:
+                    length = self.vlc_player.get_length()  # 毫秒
+                    if length > 0:
+                        new_time = int(slider_value / 100 * length)
+                        self.vlc_player.set_time(new_time)
+                        # 使用 after 延遲執行，避免阻塞
+                        self.root.after(50, self._capture_vlc_frame)
+                        self.root.after(50, self._update_video_time_display)
+                        self.root.after(50, self._update_video_label)
+                except Exception as e:
+                    print(f"VLC slider seek error: {e}")
+
+            # 回退到 OpenCV
+            elif self.video_handler and self.video_handler.is_opened():
+                total_frames = self.video_handler.get_total_frames()
+                if total_frames > 0:
+                    target_frame = int(slider_value / 100 * total_frames)
+                    frame = self.video_handler.seek_to_frame(target_frame)
+                    if frame:
+                        self.crop_canvas.set_image_from_pil(frame)
+                    self._update_video_time_display()
+                    self._update_video_label()
+
+        finally:
+            # 根據拖動前的播放狀態決定是否恢復定時更新
+            if self._slider_was_playing and self.use_vlc:
+                self.root.after(150, self._start_vlc_position_update)
+
+            # 延迟重置拖动标记
+            self.root.after(100, lambda: setattr(self, 'is_dragging_slider', False))
+
+    def _reset_slider_drag_flag(self):
+        """重置滑块拖动标记"""
+        self.is_dragging_slider = False
+
     def _update_status(self, message):
         self.status_label.config(text=message)
 
@@ -991,7 +1115,7 @@ class YOLOCropApp:
 
     def _load_video(self, video_path):
         try:
-            # Close existing video handler
+            # 關閉現有的影片處理器
             if self.video_handler:
                 self.video_handler.close()
                 self.video_handler = None
@@ -1000,11 +1124,12 @@ class YOLOCropApp:
                 self.vlc_player = None
             self._stop_video_playback()
 
-            # Try VLC first, fall back to OpenCV if VLC fails
+            # 先嘗試 VLC, fall back to OpenCV if VLC fails
             if self.use_vlc:
                 try:
                     self.vlc_player = utils.VLCVideoPlayer(self.video_frame)
-                    success, message = self.vlc_player.open(video_path)
+                    use_hw_accel = self.settings.get('video_hardware_acceleration', False)
+                    success, message = self.vlc_player.open(video_path, use_hw_accel)
                     if not success:
                         raise Exception(message)
                 except Exception as vlc_error:
@@ -1012,7 +1137,7 @@ class YOLOCropApp:
                     self.use_vlc = False
                     self.vlc_player = None
 
-            # Fall back to OpenCV if VLC not available
+            # 回退到 OpenCV if VLC not available
             if not self.use_vlc or self.vlc_player is None:
                 self.video_handler = utils.VideoHandler()
                 success, message = self.video_handler.open(video_path)
@@ -1030,7 +1155,12 @@ class YOLOCropApp:
             self.current_image_path = video_path
             self._show_video_controls()
 
-            # For VLC, we need to embed the player after a brief delay
+            # 初始化滑块位置为0
+            if self.video_slider:
+                self.video_slider.set(0)
+                self.video_slider.config(state='normal')
+
+            # 對於 VLC，需要延遲後再嵌入播放器
             if self.use_vlc and self.vlc_player:
                 self.root.after(100, self._embed_vlc_player)
 
@@ -1048,26 +1178,26 @@ class YOLOCropApp:
         if not self.vlc_player or not self.use_vlc:
             return
 
-        # Hide image canvas, show video frame
+        # 隱藏圖片畫布，顯示影片框架
         self.crop_canvas.pack_forget()
         self.video_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Force frame to update
+        # 強制框架更新
         self.video_frame.update_idletasks()
 
-        # Get the window handle
+        # 取得視窗 handle
         hwnd = self.video_frame.winfo_id()
 
-        # Set the VLC output window
+        # 設定 VLC 輸出視窗
         self.vlc_player.player.set_hwnd(hwnd)
 
-        # Start playing
+        # 開始播放
         self.vlc_player.play()
         self.is_playing = True
         self.btn_video_play.config(text='⏸')
 
-        # Update position display
-        self._update_vlc_position()
+        # 啟動定時更新播放位置
+        self._start_vlc_position_update()
 
     def _show_video_controls(self):
         self.video_control_frame.pack(side=tk.LEFT, padx=(30, 5))
@@ -1078,24 +1208,35 @@ class YOLOCropApp:
         if self.btn_next:
             self.btn_next.pack_forget()
 
+        # 顯示時間軌道和時間標籤
+        if self.video_slider:
+            self.video_slider.pack(side=tk.LEFT, padx=5)
+        if self.video_time_label:
+            self.video_time_label.pack(side=tk.LEFT, padx=5)
+
     def _hide_video_controls(self):
         self.video_control_frame.pack_forget()
 
-        # Show video frame
-        if self.video_frame and self.video_frame.winfo_ismapped():
-            self.video_frame.pack_forget()
+        # 隱藏並停用時間軌道和時間標籤
+        if self.video_slider:
+            self.video_slider.pack_forget()
+            self.video_slider.config(state='disabled')
+        if self.video_time_label:
+            self.video_time_label.pack_forget()
 
-        # Show image canvas again
-        self.crop_canvas.pack(fill=tk.BOTH, expand=True)
+    def _update_video_label(self, is_automatic_update=False):
+        # 自動更新 slider 時設置標誌，防止觸發回調
+        was_updating_slider = False
+        skip_slider_update = False
 
-        if self.btn_prev:
-            self.btn_prev.pack(side=tk.LEFT, padx=5)
-        if self.nav_label:
-            self.nav_label.pack(side=tk.LEFT, padx=5)
-        if self.btn_next:
-            self.btn_next.pack(side=tk.LEFT, padx=5)
+        # 如果是自動更新，則跳過設置拖動標誌
+        if is_automatic_update:
+            skip_slider_update = True
 
-    def _update_video_label(self):
+        if self.is_video_mode and hasattr(self, 'video_slider') and self.video_slider and not skip_slider_update:
+            was_updating_slider = True
+            self.is_dragging_slider = True
+
         # Try VLC first
         if self.use_vlc and self.vlc_player and self.vlc_player.player:
             try:
@@ -1107,6 +1248,25 @@ class YOLOCropApp:
                     total_frames = int(length / 1000 * fps)
                     current_frame = int(current_time / 1000 * fps) + 1
                     self.video_frame_label.config(text=f'第 {current_frame} / {total_frames} 幀 | {fps:.2f} FPS')
+
+                    # 延遲更新軌道位置，減少卡頓
+                    if self.video_slider and total_frames > 0:
+                        progress = int(current_time / length * 100)
+                        # 總是更新slider，因爲視頻播放時進度可能很長時間保持在小於1%
+                        try:
+                            current_slider_val = self.video_slider.get()
+                            if abs(current_slider_val - progress) >= 1 or progress < 10:
+                                self.video_slider.set(progress)
+                                self.video_slider.update_idletasks()
+                        except:
+                            pass
+
+                    # 雖然不更新 slider 了，但仍要更新時間顯示
+                    self._update_video_time_display()
+
+                    # 恢復標誌
+                    if was_updating_slider:
+                        self.root.after(50, lambda: setattr(self, 'is_dragging_slider', False))
                     return
             except:
                 pass
@@ -1117,39 +1277,115 @@ class YOLOCropApp:
             total = self.video_handler.get_total_frames()
             fps = self.video_handler.get_fps()
             self.video_frame_label.config(text=f'第 {current} / {total} 幀 | {fps:.2f} FPS')
-        else:
-            self.video_frame_label.config(text='')
 
-    def _update_vlc_position(self):
-        """定時更新 VLC 播放位置"""
+            # 更新軌道位置（優化版本）
+            if self.video_slider and total > 0:
+                try:
+                    current_slider_val = self.video_slider.get()
+                    progress = int((self.video_handler.get_frame_number() / total) * 100)
+                    if abs(current_slider_val - progress) > 1:
+                        self.video_slider.set(progress)
+                except:
+                    pass
+
+            # 雖然不更新 slider 了，但仍要更新時間顯示
+            self._update_video_time_display()
+
+            # 恢復標誌
+            if was_updating_slider:
+                self.root.after(50, lambda: setattr(self, 'is_dragging_slider', False))
+        else:
+            # 恢復標誌
+            if was_updating_slider:
+                self.root.after(50, lambda: setattr(self, 'is_dragging_slider', False))
+
+    def _update_video_time_display(self):
+        """更新時間顯示標籤（目前時間/總時長）"""
+        if not self.video_time_label:
+            return
+
+        # Try VLC first
+        if self.use_vlc and self.vlc_player and self.vlc_player.player:
+            try:
+                length = self.vlc_player.get_length()  # 毫秒
+                current_time = self.vlc_player.get_time()  # 毫秒
+
+                if length > 0:
+                    current_str = self._format_time(current_time / 1000)  # 转换为秒
+                    total_str = self._format_time(length / 1000)  # 转换为秒
+                    self.video_time_label.config(text=f'{current_str} / {total_str}')
+                    return
+            except:
+                pass
+
+        # Fall back to OpenCV
+        if self.video_handler and self.video_handler.is_opened():
+            fps = self.video_handler.get_fps()
+            current_frame = self.video_handler.get_frame_number()
+            total_frames = self.video_handler.get_total_frames()
+
+            if fps > 0 and total_frames > 0:
+                current_seconds = current_frame / fps
+                total_seconds = total_frames / fps
+                current_str = self._format_time(current_seconds)
+                total_str = self._format_time(total_seconds)
+                self.video_time_label.config(text=f'{current_str} / {total_str}')
+                return
+
+        self.video_time_label.config(text='')
+
+    def _format_time(self, seconds):
+        """格式化時間為 MM:SS 或 HH:MM:SS 格式"""
+        if seconds < 0:
+            seconds = 0
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        if hours > 0:
+            return f'{hours:02d}:{minutes:02d}:{secs:02d}'
+        else:
+            return f'{minutes:02d}:{secs:02d}'
+
+    def _update_vlc_position_loop(self):
+        """定時更新 VLC 播放位置（迴圈版本）"""
         if not self.use_vlc or not self.vlc_player or not self.is_video_mode:
             return
 
-        if self.vlc_player.player and self.vlc_player.player.is_playing():
+        # 只使用 self.is_playing 來判斷是否繼續，這樣更穩定
+        if self.is_playing and self.vlc_player.player:
+            self._update_video_label(is_automatic_update=True)
+            # 繼續定時更新
+            self.video_playback_id = self.root.after(100, self._update_vlc_position_loop)
+        else:
+            # 播放停止了
+            self.is_playing = False
+            self.btn_video_play.config(text='▶')
             self._update_video_label()
-            # Continue updating
-            self.video_playback_id = self.root.after(500, self._update_vlc_position)
 
     def video_prev_frame(self):
         # Try VLC first
         if self.use_vlc and self.vlc_player and self.vlc_player.player:
             try:
-                current_pos = self.vlc_player.get_position()
+                current_time = self.vlc_player.get_time()  # 毫秒
                 fps = self.vlc_player.get_fps()
 
-                # Seek back about 1 second (or 1 frame)
+                # 退後 1 幀 (1幀的時間 = 1000ms / fps)
                 if fps > 0:
-                    frame_duration = 1.0 / fps
-                    new_pos = max(0, current_pos - frame_duration)
-                    self.vlc_player.seek(new_pos)
+                    frame_duration_ms = 1000.0 / fps
+                    new_time = max(0, current_time - frame_duration_ms)
+                    self.vlc_player.set_time(int(new_time))
+
+                    # 稍微等待 VLC 渲染新幀
+                    import time
+                    time.sleep(0.05)
 
                     # Capture frame for cropping
                     self._capture_vlc_frame()
                     self._update_video_label()
                     self._update_status('已跳至上一幀')
                     return
-            except:
-                pass
+            except Exception as e:
+                print(f"VLC prev frame error: {e}")
 
         # Fall back to OpenCV
         if self.video_handler and self.video_handler.is_opened():
@@ -1163,23 +1399,27 @@ class YOLOCropApp:
         # Try VLC first
         if self.use_vlc and self.vlc_player and self.vlc_player.player:
             try:
-                current_pos = self.vlc_player.get_position()
-                length = self.vlc_player.get_length()
+                current_time = self.vlc_player.get_time()  # 毫秒
+                length = self.vlc_player.get_length()  # 毫秒
                 fps = self.vlc_player.get_fps()
 
-                # Seek forward about 1 second (or 1 frame)
+                # 前進 1 幀 (1幀的時間 = 1000ms / fps)
                 if fps > 0:
-                    frame_duration = 1.0 / fps
-                    new_pos = min(1.0, current_pos + frame_duration)
-                    self.vlc_player.seek(new_pos)
+                    frame_duration_ms = 1000.0 / fps
+                    new_time = min(length, current_time + frame_duration_ms)
+                    self.vlc_player.set_time(int(new_time))
+
+                    # 稍微等待 VLC 渲染新幀
+                    import time
+                    time.sleep(0.05)
 
                     # Capture frame for cropping
                     self._capture_vlc_frame()
                     self._update_video_label()
                     self._update_status('已跳至下一幀')
                     return
-            except:
-                pass
+            except Exception as e:
+                print(f"VLC next frame error: {e}")
 
         # Fall back to OpenCV
         if self.video_handler and self.video_handler.is_opened():
@@ -1209,15 +1449,31 @@ class YOLOCropApp:
         # Try VLC first
         if self.use_vlc and self.vlc_player and self.vlc_player.player:
             try:
-                self.vlc_player.toggle_play()
-                self.is_playing = self.vlc_player.is_playing_state()
-                self.btn_video_play.config(text='⏸' if self.is_playing else '▶')
+                # 直接使用按鈕文字來判斷目前狀態，而不是依賴 is_playing_state()
+                is_currently_paused = self.btn_video_play.cget('text') == '▶'
 
-                if self.is_playing:
-                    self._update_vlc_position()
+                if is_currently_paused:
+                    # 當前是暫停狀態，開始播放
+                    self.vlc_player.play()
+                    self.vlc_player.is_playing = True
+                    self.is_playing = True
+                    self.btn_video_play.config(text='⏸')
+                    # 啟動定時更新
+                    self._start_vlc_position_update()
+                else:
+                    # 當前是播放狀態，暫停
+                    self.vlc_player.pause()
+                    self.vlc_player.is_playing = False
+                    self.is_playing = False
+                    self.btn_video_play.config(text='▶')
+                    # 停止定時更新
+                    self._stop_vlc_position_update()
+
+                # 更新一次顯示
+                self._update_video_label()
                 return
-            except:
-                pass
+            except Exception as e:
+                print(f"VLC toggle play error: {e}")
 
         # Fall back to OpenCV
         if not self.video_handler or not self.video_handler.is_opened():
@@ -1228,6 +1484,25 @@ class YOLOCropApp:
         else:
             self._start_video_playback()
 
+    def _stop_vlc_position_update(self):
+        """停止 VLC 播放位置的定時更新"""
+        if self.video_playback_id:
+            self.root.after_cancel(self.video_playback_id)
+            self.video_playback_id = None
+
+    def _start_vlc_position_update(self):
+        """啟動 VLC 播放位置的定時更新"""
+        if not self.use_vlc or not self.vlc_player or not self.is_video_mode:
+            return
+
+        # 先更新一次
+        self._update_video_label()
+
+        # 持續定時更新
+        if self.video_playback_id:
+            self.root.after_cancel(self.video_playback_id)
+        self.video_playback_id = self.root.after(100, self._update_vlc_position_loop)
+
     def _start_video_playback(self):
         # Try VLC first
         if self.use_vlc and self.vlc_player and self.vlc_player.player:
@@ -1235,7 +1510,7 @@ class YOLOCropApp:
                 self.vlc_player.play()
                 self.is_playing = True
                 self.btn_video_play.config(text='⏸')
-                self._update_vlc_position()
+                self._start_vlc_position_update()
                 return
             except:
                 pass
@@ -1271,7 +1546,7 @@ class YOLOCropApp:
         self.is_playing = False
         self.btn_video_play.config(text='▶')
 
-        # Stop VLC if active
+        # 若 VLC 正在使用則停止
         if self.use_vlc and self.vlc_player:
             try:
                 self.vlc_player.pause()
@@ -1298,7 +1573,7 @@ class YOLOCropApp:
 
         video_name = os.path.splitext(os.path.basename(video_path))[0]
 
-        # Get current frame number
+        # 取得目前幀編號
         frame_num = 0
         if self.use_vlc and self.vlc_player and self.vlc_player.player:
             try:

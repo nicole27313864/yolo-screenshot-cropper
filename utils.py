@@ -138,14 +138,14 @@ def show_info(title, message, parent=None, play_sound=True):
         return
     dialog = tk.Toplevel(parent)
     dialog.title(title)
-    dialog.geometry('350x150')
+    dialog.geometry('400x180')
     dialog.configure(bg='#1A1A1A')
     dialog.transient(parent)
     dialog.grab_set()
     _center_on_parent(dialog, parent)
 
     tk.Label(dialog, text='ℹ️', font=('Arial', 24), bg='#1A1A1A', fg='#4ECDC4').pack(pady=(15, 5))
-    tk.Label(dialog, text=message, bg='#1A1A1A', fg='#FFFFFF', wraplength=300, justify='center').pack(pady=5)
+    tk.Label(dialog, text=message, bg='#1A1A1A', fg='#FFFFFF', wraplength=350, justify='center').pack(pady=5)
     tk.Button(dialog, text='確定', command=dialog.destroy, bg='#4A4A4A', fg='#FFFFFF',
               relief='flat', padx=20, pady=5).pack(pady=10)
 
@@ -362,17 +362,42 @@ class VLCVideoPlayer:
         self.media = None
         self.video_path = None
         self.is_playing = False
+        self.frame_cache = {}
+        self.max_cache_size = 200
+        self.fps = 0
+        self.total_frames = 0
 
-    def open(self, video_path):
+    def open(self, video_path, use_hardware_acceleration=False):
         try:
             import vlc
+            import cv2
             self.video_path = video_path
+            self.frame_cache = {}
 
-            # 建立 VLC instance - 完全軟體解碼
-            self.instance = vlc.Instance(
-                '--avcodec-hw=none',
-                '--vout=directx',
-            )
+            # 先用 OpenCV 取得影片資訊（用於幀計算）
+            cap = cv2.VideoCapture(video_path)
+            if cap.isOpened():
+                self.fps = cap.get(cv2.CAP_PROP_FPS)
+                self.total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                cap.release()
+
+            # 根據設置決定是否使用硬體加速
+            if use_hardware_acceleration:
+                # 硬體加速 - 讓 VLC 自動選擇最快的解碼器
+                self.instance = vlc.Instance(
+                    '--vout=opengl',
+                    '--no-video-title-show',
+                    '--quiet',
+                )
+            else:
+                # 軟體解碼
+                self.instance = vlc.Instance(
+                    '--avcodec-hw=none',
+                    '--vout=opengl',
+                    '--no-video-title-show',
+                    '--quiet',
+                )
+
             self.player = self.instance.media_player_new()
 
             # 設定視窗嵌入
@@ -381,8 +406,9 @@ class VLCVideoPlayer:
 
             # 建立 media 並載入
             self.media = self.instance.media_new(video_path)
-            # 軟體解碼選項
-            self.media.add_option(':avcodec-hw=none')
+            # 根據設置添加硬體加速選項
+            if not use_hardware_acceleration:
+                self.media.add_option('avcodec-hw=none')
             self.player.set_media(self.media)
 
             return True, f"已載入: {os.path.basename(video_path)}"
@@ -398,19 +424,21 @@ class VLCVideoPlayer:
     def play(self):
         if self.player:
             self.player.play()
-            self.is_playing = True
+            # 從 VLC 獲取真實狀態
+            self.is_playing = self.player.is_playing()
 
     def pause(self):
         if self.player:
             self.player.pause()
+            # VLC pause 後狀態為 false
             self.is_playing = False
 
     def toggle_play(self):
         if self.player:
-            if self.is_playing:
-                self.pause()
-            else:
-                self.play()
+            # 調用 VLC 的 pause/play，VLC 會自動處理播放狀態
+            self.player.pause() if self.is_playing else self.player.play()
+            # 從 VLC 獲取真實狀態並同步
+            self.is_playing = self.player.is_playing()
 
     def stop(self):
         if self.player:
@@ -457,9 +485,18 @@ class VLCVideoPlayer:
         return False
 
     def get_frame_at_time(self, time_ms):
-        """取得指定時間的幀 (用於裁剪)"""
+        """取得指定時間的幀 (用於裁剪) - 使用緩存優化"""
         try:
             import cv2
+
+            # 使用已快取的 fps 和 total_frames
+            fps = self.fps if self.fps > 0 else 30
+            frame_number = int(time_ms / 1000 * fps)
+
+            # 檢查緩存
+            if frame_number in self.frame_cache:
+                return self.frame_cache[frame_number]
+
             if not self.video_path:
                 return None
 
@@ -467,11 +504,6 @@ class VLCVideoPlayer:
             if not cap.isOpened():
                 return None
 
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            if fps <= 0:
-                fps = 30
-
-            frame_number = int(time_ms / 1000 * fps)
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
 
             ret, frame = cap.read()
@@ -479,7 +511,15 @@ class VLCVideoPlayer:
 
             if ret:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                return Image.fromarray(frame)
+                pil_image = Image.fromarray(frame)
+
+                # 添加到緩存
+                if len(self.frame_cache) >= self.max_cache_size:
+                    oldest_key = min(self.frame_cache.keys())
+                    del self.frame_cache[oldest_key]
+                self.frame_cache[frame_number] = pil_image
+
+                return pil_image
             return None
         except Exception:
             return None
@@ -494,3 +534,6 @@ class VLCVideoPlayer:
         self.media = None
         self.video_path = None
         self.is_playing = False
+        self.frame_cache = {}
+        self.fps = 0
+        self.total_frames = 0
