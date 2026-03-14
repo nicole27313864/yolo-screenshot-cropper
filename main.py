@@ -469,8 +469,10 @@ class YOLOCropApp:
         self.root.bind('<Control-O>', lambda e: self.open_folder())
         self.root.bind('<Control-v>', lambda e: self.paste_from_clipboard())
         self.root.bind('<Control-V>', lambda e: self.paste_from_clipboard())
-        self.root.bind('<Control-s>', lambda e: self.save_cropped())
-        self.root.bind('<Control-S>', lambda e: self.save_cropped())
+        self.root.bind('<Control-s>', lambda e: self.save_video_frame() if self.is_video_mode else self.save_cropped())
+        self.root.bind('<Control-S>', lambda e: self.save_video_frame() if self.is_video_mode else self.save_cropped())
+        self.root.bind('<Control-Shift-S>', lambda e: self.save_cropped_new() if not self.is_video_mode else None)
+        self.root.bind('<Control-Shift-s>', lambda e: self.save_cropped_new() if not self.is_video_mode else None)
         self.root.bind('<Return>', lambda e: self.save_cropped())
 
         # 方向鍵 - 處理圖片資料夾和影片導航
@@ -843,6 +845,114 @@ class YOLOCropApp:
 
         return filename
 
+    def save_video_frame(self):
+        """儲存當前影片幀（完整尺寸，每次都是新檔案）"""
+        if not self.is_video_mode:
+            # 非影片模式，使用原本的 save_cropped
+            self.save_cropped()
+            return
+
+        output_dir = self.output_var.get().strip()
+
+        if not output_dir:
+            utils.show_info('提示', '請選擇輸出路徑', parent=self.root, play_sound=self.settings.get('notification_sound', True))
+            self.select_output_directory()
+            output_dir = self.output_var.get().strip()
+            if not output_dir:
+                return
+
+        if not os.path.isdir(output_dir):
+            utils.show_error('錯誤', '輸出路徑無效', parent=self.root, play_sound=self.settings.get('notification_sound', True))
+            return
+
+        # 捕獲當前幀
+        frame = None
+        if self.use_vlc and self.vlc_player and self.vlc_player.player:
+            try:
+                current_time = self.vlc_player.get_time()
+                frame = self.vlc_player.get_frame_at_time(current_time)
+            except Exception as e:
+                print(f"Failed to capture VLC frame: {e}")
+        elif self.video_handler and self.video_handler.is_opened():
+            try:
+                frame = self.video_handler.get_current_frame_as_pil()
+            except Exception as e:
+                print(f"Failed to capture OpenCV frame: {e}")
+
+        if not frame:
+            utils.show_error('錯誤', '無法捕獲當前影片幀', parent=self.root, play_sound=self.settings.get('notification_sound', True))
+            return
+
+        # 產生新檔名（每次都是新檔案）
+        ext = '.png'
+        filename = self.generate_video_filename(ext)
+        # 確保是新檔名（不覆蓋）
+        base_name = os.path.splitext(filename)[0]
+        counter = 1
+        while os.path.exists(os.path.join(output_dir, filename)):
+            filename = f'{base_name}_{counter}{ext}'
+            counter += 1
+
+        output_path = os.path.join(output_dir, filename)
+
+        # 儲存完整尺寸的圖片
+        try:
+            frame.save(output_path, format='PNG')
+            self._update_status(f'已保存影片幀: {output_path}')
+        except Exception as e:
+            utils.show_error('錯誤', f'保存失敗: {str(e)}', parent=self.root, play_sound=self.settings.get('notification_sound', True))
+
+    def save_cropped_new(self):
+        """儲存裁剪區域為新檔案（每次都是新檔案）"""
+        if not self.crop_canvas.has_image():
+            utils.show_info('提示', '請先載入圖片', parent=self.root, play_sound=self.settings.get('notification_sound', True))
+            return
+
+        output_dir = self.output_var.get().strip()
+
+        if not output_dir:
+            utils.show_info('提示', '請選擇輸出路徑', parent=self.root, play_sound=self.settings.get('notification_sound', True))
+            self.select_output_directory()
+            output_dir = self.output_var.get().strip()
+            if not output_dir:
+                return
+
+        if not os.path.isdir(output_dir):
+            utils.show_error('錯誤', '輸出路徑無效', parent=self.root, play_sound=self.settings.get('notification_sound', True))
+            return
+
+        crop_region = self.crop_canvas.get_crop_region()
+
+        # 產生新檔名
+        ext = '.png'
+        if self.crop_canvas.original_image:
+            img_format = self.crop_canvas.original_image.format
+            if img_format:
+                ext = f'.{img_format.lower()}'
+
+        filename = self.generate_auto_filename(ext)
+        # 確保是新檔名（不覆蓋）
+        base_name = os.path.splitext(filename)[0]
+        counter = 1
+        while os.path.exists(os.path.join(output_dir, filename)):
+            filename = f'{base_name}_{counter}{ext}'
+            counter += 1
+
+        output_path = os.path.join(output_dir, filename)
+
+        # 使用 crop_and_save 裁剪並保存
+        from crop_algorithm import crop_and_save
+        success, result = crop_and_save(
+            self.crop_canvas.original_image,
+            crop_region,
+            output_path
+        )
+
+        if success:
+            self._update_status(f'已保存裁剪: {result}')
+        else:
+            utils.show_error('錯誤', f'保存失敗: {result}', parent=self.root, play_sound=self.settings.get('notification_sound', True))
+
     def save_cropped(self):
         if not self.crop_canvas.has_image():
             utils.show_info('提示', '請先載入圖片', parent=self.root, play_sound=self.settings.get('notification_sound', True))
@@ -937,7 +1047,10 @@ class YOLOCropApp:
         if success:
             self.last_saved_path = output_path
             self.current_image_path = output_path
-            self._update_status(f'已保存: {result}')
+            if self.is_video_mode:
+                self._update_status(f'已保存影片幀: {result}')
+            else:
+                self._update_status(f'已保存: {result}')
         else:
             utils.show_error('錯誤', f'保存失敗: {result}', parent=self.root, play_sound=self.settings.get('notification_sound', True))
 
