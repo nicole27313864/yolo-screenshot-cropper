@@ -18,6 +18,9 @@ from crop_algorithm import crop_and_save
 import utils
 
 
+VIDEO_FORMATS = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm']
+
+
 class Settings:
     DEFAULT_SETTINGS = {
         'auto_naming': False,
@@ -81,6 +84,12 @@ class YOLOCropApp:
         self.folder_images = []
         self.current_folder_index = -1
         self.current_image_from_folder = None
+
+        # Video related
+        self.video_handler = None
+        self.is_video_mode = False
+        self.video_playback_id = None
+        self.is_playing = False
 
         self._setup_styles()
         self._create_ui()
@@ -178,6 +187,19 @@ class YOLOCropApp:
             cursor='hand2'
         )
         self.btn_paste.pack(side=tk.LEFT, padx=5)
+
+        self.btn_open_video = tk.Button(
+            self.toolbar,
+            text='📹 開啟影片',
+            command=self.open_video,
+            bg='#6B5B95',
+            fg='#FFFFFF',
+            relief=tk.FLAT,
+            padx=10,
+            pady=5,
+            cursor='hand2'
+        )
+        self.btn_open_video.pack(side=tk.LEFT, padx=5)
 
         tk.Label(self.toolbar, text='寬度:', bg='#2D2D2D', fg='#FFFFFF').pack(side=tk.LEFT, padx=(20, 5))
 
@@ -323,6 +345,62 @@ class YOLOCropApp:
         )
         self.btn_next.pack(side=tk.LEFT, padx=5)
 
+        # Video control frame
+        self.video_control_frame = tk.Frame(self.nav_frame, bg='#2D2D2D')
+        self.video_control_frame.pack(side=tk.LEFT, padx=(30, 5))
+        self.video_control_frame.pack_forget()  # Hidden by default
+
+        self.btn_video_prev = tk.Button(
+            self.video_control_frame,
+            text='◀◀',
+            command=self.video_prev_frame,
+            bg='#3B3B3B',
+            fg='#FFFFFF',
+            relief=tk.FLAT,
+            padx=8,
+            pady=2,
+            cursor='hand2',
+            width=3
+        )
+        self.btn_video_prev.pack(side=tk.LEFT, padx=2)
+
+        self.btn_video_play = tk.Button(
+            self.video_control_frame,
+            text='▶',
+            command=self.video_toggle_play,
+            bg='#3B3B3B',
+            fg='#FFFFFF',
+            relief=tk.FLAT,
+            padx=8,
+            pady=2,
+            cursor='hand2',
+            width=3
+        )
+        self.btn_video_play.pack(side=tk.LEFT, padx=2)
+
+        self.btn_video_next = tk.Button(
+            self.video_control_frame,
+            text='▶▶',
+            command=self.video_next_frame,
+            bg='#3B3B3B',
+            fg='#FFFFFF',
+            relief=tk.FLAT,
+            padx=8,
+            pady=2,
+            cursor='hand2',
+            width=3
+        )
+        self.btn_video_next.pack(side=tk.LEFT, padx=2)
+
+        self.video_frame_label = tk.Label(
+            self.video_control_frame,
+            text='',
+            bg='#2D2D2D',
+            fg='#FFFFFF',
+            padx=10
+        )
+        self.video_frame_label.pack(side=tk.LEFT, padx=5)
+
     def _load_settings_to_ui(self):
         self.output_var.set(self.output_directory)
         self.width_var.set(str(self.settings.get('crop_width', 640)))
@@ -336,8 +414,11 @@ class YOLOCropApp:
         self.root.bind('<Control-s>', lambda e: self.save_cropped())
         self.root.bind('<Control-S>', lambda e: self.save_cropped())
         self.root.bind('<Return>', lambda e: self.save_cropped())
-        self.root.bind('<Left>', lambda e: self.prev_image())
-        self.root.bind('<Right>', lambda e: self.next_image())
+
+        # Arrow keys - handle both image folder and video navigation
+        self.root.bind('<Left>', lambda e: self._handle_left_key())
+        self.root.bind('<Right>', lambda e: self._handle_right_key())
+        self.root.bind('<space>', lambda e: self._handle_space_key())
 
         # 點擊空白處取消聚焦
         self.root.bind('<Button-1>', lambda e: self._on_background_click(e))
@@ -511,6 +592,8 @@ class YOLOCropApp:
             filepath = files[0]
             if os.path.isdir(filepath):
                 self.load_folder_from_path(filepath)
+            elif utils.is_supported_video(filepath):
+                self.open_video_file(filepath)
             elif utils.is_supported_image(filepath):
                 self.load_image(filepath)
 
@@ -715,7 +798,11 @@ class YOLOCropApp:
             if self.last_saved_path:
                 output_path = self.last_saved_path
             else:
-                original_filename = self.generate_auto_filename(ext)
+                # 影片模式：使用影片檔名生成
+                if self.is_video_mode:
+                    original_filename = self.generate_video_filename(ext)
+                else:
+                    original_filename = self.generate_auto_filename(ext)
                 output_path = os.path.join(output_dir, original_filename)
         else:
             # 未啟用自動命名：彈出另存新檔視窗，使用命名格式作為預設檔名
@@ -728,7 +815,10 @@ class YOLOCropApp:
             else:
                 ext = '.png'
             # 使用自動命名格式作為預設檔名
-            initial_filename = self.generate_auto_filename(ext)
+            if self.is_video_mode:
+                initial_filename = self.generate_video_filename(ext)
+            else:
+                initial_filename = self.generate_auto_filename(ext)
 
             output_path = tk.filedialog.asksaveasfilename(
                 initialdir=output_dir,
@@ -824,13 +914,26 @@ class YOLOCropApp:
         return result[0]
 
     def reset(self):
+        # 停止影片播放
+        self._stop_video_playback()
+
+        # 關閉影片
+        if self.video_handler:
+            self.video_handler.close()
+            self.video_handler = None
+
+        self.is_video_mode = False
+
+        # 恢復圖片導航控制
+        self._hide_video_controls()
+        self._update_navigation()
+
         self.crop_canvas.reset()
         self.current_image_path = None
         self.current_image_from_folder = None
         self.last_saved_path = None
         self.folder_images = []
         self.current_folder_index = -1
-        self._update_navigation()
         self._update_status('請載入圖片 (檔案對話框 / Ctrl+O 開啟資料夾 / Ctrl+V 貼上 / 拖放檔案)')
         self.size_label.config(text='')
 
@@ -841,6 +944,22 @@ class YOLOCropApp:
         # 點擊空白處將焦點設到 root，解除輸入欄位的聚焦
         self.root.focus_set()
 
+    def _handle_left_key(self):
+        if self.is_video_mode:
+            self.video_prev_frame()
+        else:
+            self.prev_image()
+
+    def _handle_right_key(self):
+        if self.is_video_mode:
+            self.video_next_frame()
+        else:
+            self.next_image()
+
+    def _handle_space_key(self):
+        if self.is_video_mode:
+            self.video_toggle_play()
+
     def _update_status(self, message):
         self.status_label.config(text=message)
 
@@ -848,6 +967,152 @@ class YOLOCropApp:
         if self.crop_canvas.has_image():
             img_info = f'圖片尺寸: {self.crop_canvas.img_width} x {self.crop_canvas.img_height}'
             self.size_label.config(text=img_info)
+
+    def open_video(self):
+        video_path = utils.open_video_dialog()
+        if not video_path:
+            return
+        self._load_video(video_path)
+
+    def open_video_file(self, video_path):
+        if not utils.is_supported_video(video_path):
+            return False
+        return self._load_video(video_path)
+
+    def _load_video(self, video_path):
+        if self.video_handler:
+            self.video_handler.close()
+            self._stop_video_playback()
+
+        self.video_handler = utils.VideoHandler()
+        success, message = self.video_handler.open(video_path)
+
+        if not success:
+            utils.show_error('錯誤', message, parent=self.root, play_sound=self.settings.get('notification_sound', True))
+            return False
+
+        self.is_video_mode = True
+        self.current_image_path = video_path
+
+        frame = self.video_handler.get_current_frame_as_pil()
+        if frame:
+            self.crop_canvas.set_image_from_pil(frame)
+            width = int(self.width_var.get())
+            height = int(self.height_var.get())
+            self.crop_canvas.set_crop_size(width, height)
+
+        self._show_video_controls()
+        self._update_video_label()
+        self._update_status(f'已載入影片: {os.path.basename(video_path)}')
+        self._update_size_label()
+        return True
+
+    def _show_video_controls(self):
+        self.video_control_frame.pack(side=tk.LEFT, padx=(30, 5))
+        self.btn_prev.pack_forget()
+        self.nav_label.pack_forget()
+        self.btn_next.pack_forget()
+        self.btn_prev = None
+        self.btn_next = None
+
+    def _hide_video_controls(self):
+        self.video_control_frame.pack_forget()
+        self.btn_prev.pack(side=tk.LEFT, padx=5)
+        self.nav_label.pack(side=tk.LEFT, padx=5)
+        self.btn_next.pack(side=tk.LEFT, padx=5)
+
+    def _update_video_label(self):
+        if self.video_handler and self.video_handler.is_opened():
+            current = self.video_handler.get_frame_number() + 1
+            total = self.video_handler.get_total_frames()
+            fps = self.video_handler.get_fps()
+            self.video_frame_label.config(text=f'第 {current} / {total} 幀 | {fps:.2f} FPS')
+        else:
+            self.video_frame_label.config(text='')
+
+    def video_prev_frame(self):
+        if self.video_handler and self.video_handler.is_opened():
+            frame = self.video_handler.prev_frame()
+            if frame:
+                self.crop_canvas.set_image_from_pil(frame)
+                self._update_video_label()
+                self._update_status(f'已跳至第 {self.video_handler.get_frame_number() + 1} 幀')
+
+    def video_next_frame(self):
+        if self.video_handler and self.video_handler.is_opened():
+            frame = self.video_handler.next_frame()
+            if frame:
+                self.crop_canvas.set_image_from_pil(frame)
+                self._update_video_label()
+                self._update_status(f'已跳至第 {self.video_handler.get_frame_number() + 1} 幀')
+
+    def video_toggle_play(self):
+        if not self.video_handler or not self.video_handler.is_opened():
+            return
+
+        if self.is_playing:
+            self._stop_video_playback()
+        else:
+            self._start_video_playback()
+
+    def _start_video_playback(self):
+        if not self.video_handler or not self.video_handler.is_opened():
+            return
+
+        self.is_playing = True
+        self.btn_video_play.config(text='⏸')
+
+        fps = self.video_handler.get_fps()
+        if fps <= 0:
+            fps = 30
+
+        delay = int(1000 / fps)
+
+        def play_loop():
+            if not self.is_playing or not self.video_handler.is_opened():
+                return
+
+            frame = self.video_handler.next_frame()
+            if frame:
+                self.crop_canvas.set_image_from_pil(frame)
+                self._update_video_label()
+                self.video_playback_id = self.root.after(delay, play_loop)
+            else:
+                self._stop_video_playback()
+
+        play_loop()
+
+    def _stop_video_playback(self):
+        self.is_playing = False
+        self.btn_video_play.config(text='▶')
+        if self.video_playback_id:
+            self.root.after_cancel(self.video_playback_id)
+            self.video_playback_id = None
+
+    def generate_video_filename(self, extension='.png'):
+        if not self.video_handler or not self.video_handler.video_path:
+            return self.generate_auto_filename(extension)
+
+        video_name = os.path.splitext(os.path.basename(self.video_handler.video_path))[0]
+        frame_num = self.video_handler.get_frame_number()
+        frame_str = f'{frame_num:04d}'
+
+        filename = f'{video_name}_frame_{frame_str}{extension}'
+
+        output_dir = self.output_var.get().strip() if hasattr(self, 'output_var') else ''
+        if not output_dir:
+            output_dir = self.settings.get('output_dir', '')
+
+        if output_dir and os.path.exists(output_dir):
+            full_path = os.path.join(output_dir, filename)
+            if os.path.exists(full_path):
+                base_name = filename[:filename.rfind(extension)]
+                counter = 1
+                while os.path.exists(os.path.join(output_dir, f'{base_name}_{counter}{extension}')):
+                    counter += 1
+                filename = f'{base_name}_{counter}{extension}'
+
+        return filename
 
     def run(self):
         self.root.mainloop()

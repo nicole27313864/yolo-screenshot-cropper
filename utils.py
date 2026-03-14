@@ -5,6 +5,7 @@ from PIL import Image
 
 
 SUPPORTED_FORMATS = ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp']
+SUPPORTED_VIDEO_FORMATS = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm']
 
 
 def get_supported_filetypes():
@@ -221,3 +222,131 @@ def get_unique_filepath(directory, filename):
 
 def clamp(value, min_val, max_val):
     return max(min_val, min(value, max_val))
+
+
+def get_video_filetypes():
+    return [
+        ('影片檔案', '*.mp4 *.avi *.mov *.mkv *.wmv *.flv *.webm'),
+        ('MP4', '*.mp4'),
+        ('AVI', '*.avi'),
+        ('MOV', '*.mov'),
+        ('MKV', '*.mkv'),
+        ('所有影片', '*.mp4 *.avi *.mov *.mkv *.wmv *.flv *.webm'),
+        ('所有檔案', '*.*')
+    ]
+
+
+def is_supported_video(path):
+    if not path:
+        return False
+    ext = os.path.splitext(path)[1].lower()
+    return ext in SUPPORTED_VIDEO_FORMATS
+
+
+def open_video_dialog():
+    filepath = filedialog.askopenfilename(
+        title='選擇影片',
+        filetypes=get_video_filetypes()
+    )
+    return filepath
+
+
+class VideoHandler:
+    def __init__(self):
+        self.cap = None
+        self.video_path = None
+        self.total_frames = 0
+        self.fps = 0
+        self.current_frame = 0
+        self.frame_cache = {}
+        self.max_cache_size = 50
+
+    def open(self, video_path):
+        try:
+            import cv2
+            self.cap = cv2.VideoCapture(video_path)
+            if not self.cap.isOpened():
+                return False, "無法開啟影片"
+
+            self.video_path = video_path
+            self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+            self.current_frame = 0
+            self.frame_cache = {}
+            return True, f"已開啟影片: {self.total_frames} 幀, {self.fps:.2f} FPS"
+        except Exception as e:
+            return False, f"開啟影片失敗: {str(e)}"
+
+    def get_frame(self, frame_number):
+        import cv2
+        if not self.cap or frame_number < 0 or frame_number >= self.total_frames:
+            return None
+
+        if frame_number in self.frame_cache:
+            return self.frame_cache[frame_number]
+
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        ret, frame = self.cap.read()
+        if ret:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            if len(self.frame_cache) >= self.max_cache_size:
+                oldest_key = min(self.frame_cache.keys())
+                del self.frame_cache[oldest_key]
+            self.frame_cache[frame_number] = frame
+            return frame
+        return None
+
+    def get_frame_as_pil(self, frame_number):
+        import cv2
+        frame = self.get_frame(frame_number)
+        if frame is None:
+            return None
+        return Image.fromarray(frame)
+
+    def get_current_frame_as_pil(self):
+        return self.get_frame_as_pil(self.current_frame)
+
+    def next_frame(self):
+        if self.current_frame < self.total_frames - 1:
+            self.current_frame += 1
+            return self.get_current_frame_as_pil()
+        return None
+
+    def prev_frame(self):
+        if self.current_frame > 0:
+            self.current_frame -= 1
+            return self.get_current_frame_as_pil()
+        return None
+
+    def seek_to(self, frame_number):
+        if 0 <= frame_number < self.total_frames:
+            self.current_frame = frame_number
+            return self.get_current_frame_as_pil()
+        return None
+
+    def get_frame_number(self):
+        return self.current_frame
+
+    def get_total_frames(self):
+        return self.total_frames
+
+    def get_fps(self):
+        return self.fps
+
+    def get_duration_seconds(self):
+        if self.fps > 0:
+            return self.total_frames / self.fps
+        return 0
+
+    def is_opened(self):
+        return self.cap is not None and self.cap.isOpened()
+
+    def close(self):
+        if self.cap:
+            self.cap.release()
+            self.cap = None
+        self.video_path = None
+        self.total_frames = 0
+        self.fps = 0
+        self.current_frame = 0
+        self.frame_cache = {}
