@@ -1103,53 +1103,112 @@ class YOLOCropApp:
             self.size_label.config(text=img_info)
 
     def open_video(self):
+        # 防止重複點擊
+        if getattr(self, 'is_loading_video', False):
+            return
         video_path = utils.open_video_dialog()
         if not video_path:
             return
-        self._load_video(video_path)
+        self._load_video_async(video_path)
 
     def open_video_file(self, video_path):
+        # 防止重複點擊
+        if getattr(self, 'is_loading_video', False):
+            return False
         if not utils.is_supported_video(video_path):
             return False
-        return self._load_video(video_path)
+        self._load_video_async(video_path)
+        return True
 
-    def _load_video(self, video_path):
-        try:
-            # 關閉現有的影片處理器
-            if self.video_handler:
-                self.video_handler.close()
-                self.video_handler = None
-            if self.vlc_player:
-                self.vlc_player.close()
-                self.vlc_player = None
-            self._stop_video_playback()
+    def _load_video_async(self, video_path):
+        """使用執行緒非同步載入影片，避免阻塞 UI"""
+        if getattr(self, 'is_loading_video', False):
+            return
 
-            # 先嘗試 VLC, fall back to OpenCV if VLC fails
-            if self.use_vlc:
-                try:
-                    self.vlc_player = utils.VLCVideoPlayer(self.video_frame)
-                    use_hw_accel = self.settings.get('video_hardware_acceleration', False)
-                    success, message = self.vlc_player.open(video_path, use_hw_accel)
-                    if not success:
-                        raise Exception(message)
-                except Exception as vlc_error:
-                    print(f"VLC failed: {vlc_error}, falling back to OpenCV")
-                    self.use_vlc = False
+        self.is_loading_video = True
+        self.btn_open_video.config(state='disabled')
+        self._update_status('正在載入影片...')
+
+        # 在執行緒中載入影片
+        def load_in_thread():
+            try:
+                # 關閉現有的影片處理器
+                if self.video_handler:
+                    self.video_handler.close()
+                    self.video_handler = None
+                if self.vlc_player:
+                    self.vlc_player.close()
                     self.vlc_player = None
 
-            # 回退到 OpenCV if VLC not available
+                # 等待上一個播放執行緒停止
+                import time
+                time.sleep(0.1)
+
+                # 先嘗試 VLC, fall back to OpenCV if VLC fails
+                use_vlc = self.use_vlc
+                vlc_player = None
+                video_handler = None
+
+                if use_vlc:
+                    try:
+                        vlc_player = utils.VLCVideoPlayer(self.video_frame)
+                        use_hw_accel = self.settings.get('video_hardware_acceleration', False)
+                        success, message = vlc_player.open(video_path, use_hw_accel)
+                        if not success:
+                            raise Exception(message)
+                    except Exception as vlc_error:
+                        print(f"VLC failed: {vlc_error}, falling back to OpenCV")
+                        use_vlc = False
+                        vlc_player = None
+
+                # 回退到 OpenCV if VLC not available
+                result = {
+                    'success': False,
+                    'video_path': video_path,
+                    'use_vlc': use_vlc,
+                    'vlc_player': vlc_player,
+                    'video_handler': None,
+                    'error': None
+                }
+
+                if not use_vlc or vlc_player is None:
+                    video_handler = utils.VideoHandler()
+                    success, message = video_handler.open(video_path)
+                    if not success:
+                        result['error'] = message
+                        self.root.after(0, lambda: self._on_video_load_error(result))
+                        return
+                    result['video_handler'] = video_handler
+
+                result['success'] = True
+                self.root.after(0, lambda: self._on_video_loaded(result))
+
+            except Exception as e:
+                result = {'success': False, 'error': str(e), 'video_path': video_path}
+                self.root.after(0, lambda: self._on_video_load_error(result))
+
+        # 啟動執行緒
+        thread = threading.Thread(target=load_in_thread, daemon=True)
+        thread.start()
+
+    def _on_video_loaded(self, result):
+        """影片載入完成後的 UI 更新（在主執行緒執行）"""
+        try:
+            video_path = result['video_path']
+
+            # 恢復 VLC 設置（因為執行緒中可能修改了）
+            self.use_vlc = result['use_vlc']
+            self.vlc_player = result.get('vlc_player')
+            self.video_handler = result.get('video_handler')
+
             if not self.use_vlc or self.vlc_player is None:
-                self.video_handler = utils.VideoHandler()
-                success, message = self.video_handler.open(video_path)
-                if not success:
-                    utils.show_error('錯誤', message, parent=self.root, play_sound=self.settings.get('notification_sound', True))
-                    return False
-                frame = self.video_handler.get_current_frame_as_pil()
-                if frame:
-                    self.crop_canvas.set_image_from_pil(frame)
-                    width = int(self.width_var.get())
-                    height = int(self.height_var.get())
-                    self.crop_canvas.set_crop_size(width, height)
+                if self.video_handler:
+                    frame = self.video_handler.get_current_frame_as_pil()
+                    if frame:
+                        self.crop_canvas.set_image_from_pil(frame)
+                        width = int(self.width_var.get())
+                        height = int(self.height_var.get())
+                        self.crop_canvas.set_crop_size(width, height)
 
             self.is_video_mode = True
             self.current_image_path = video_path
@@ -1167,11 +1226,23 @@ class YOLOCropApp:
             self._update_video_label()
             self._update_status(f'已載入影片: {os.path.basename(video_path)}')
             self._update_size_label()
-            return True
 
         except Exception as e:
             utils.show_error('錯誤', f'載入影片失敗: {str(e)}', parent=self.root, play_sound=self.settings.get('notification_sound', True))
-            return False
+
+        # 重置加載狀態
+        self.is_loading_video = False
+        self.btn_open_video.config(state='normal')
+
+    def _on_video_load_error(self, result):
+        """影片載入失敗後的 UI 更新（在主執行緒執行）"""
+        error_msg = result.get('error', '未知錯誤')
+        utils.show_error('錯誤', f'載入影片失敗: {error_msg}', parent=self.root, play_sound=self.settings.get('notification_sound', True))
+
+        # 重置加載狀態
+        self.is_loading_video = False
+        self.btn_open_video.config(state='normal')
+        self._update_status('準備就緒')
 
     def _embed_vlc_player(self):
         """嵌入 VLC 播放器到 Tkinter 視窗"""
