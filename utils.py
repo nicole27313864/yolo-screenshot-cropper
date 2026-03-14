@@ -368,14 +368,19 @@ class VLCVideoPlayer:
             import vlc
             self.video_path = video_path
 
-            # 建立 VLC instance
-            self.instance = vlc.Instance()
+            # 建立 VLC instance - 完全禁用硬體加速
+            self.instance = vlc.Instance(
+                '--avcodec-hw=none',
+                '--vout=wingdi',  # 使用 GDI 輸出而非 Direct3D
+                '--no-xlib'
+            )
             self.player = self.instance.media_player_new()
 
             # 建立 media 並載入
             self.media = self.instance.media_new(video_path)
-            # 禁用硬體加速
+            # 額外確保禁用硬體解碼
             self.media.add_option(':avcodec-hw=none')
+            self.media.add_option(':avcodec-thread=none')
             self.player.set_media(self.media)
 
             return True, f"已載入: {os.path.basename(video_path)}"
