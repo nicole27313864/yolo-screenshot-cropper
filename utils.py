@@ -368,8 +368,8 @@ class VLCVideoPlayer:
             import vlc
             self.video_path = video_path
 
-            # 建立 VLC instance
-            self.instance = vlc.Instance()
+            # 建立 VLC instance - 禁用硬體加速以避免嵌入式問題
+            self.instance = vlc.Instance('--no-video Hardware', '--avcodec-hw=none')
             self.player = self.instance.media_player_new()
 
             # 建立 media 並載入
