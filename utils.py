@@ -8,6 +8,20 @@ SUPPORTED_FORMATS = ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp']
 SUPPORTED_VIDEO_FORMATS = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm']
 
 
+def get_font_family():
+    """讀取字體設置"""
+    font_family = 'Microsoft JhengHei'
+    try:
+        if os.path.exists('yolo_cropper_settings.json'):
+            import json
+            with open('yolo_cropper_settings.json', 'r', encoding='utf-8') as f:
+                settings = json.load(f)
+                font_family = settings.get('font_family', 'Microsoft JhengHei')
+    except:
+        pass
+    return font_family
+
+
 def get_supported_filetypes():
     return [
         ('圖片檔案', '*.png *.jpg *.jpeg *.bmp *.gif *.webp'),
@@ -123,7 +137,9 @@ def show_error(title, message, parent=None, play_sound=True):
     dialog.grab_set()
     _center_on_parent(dialog, parent)
 
-    tk.Label(dialog, text='⚠️', font=('Arial', 24), bg='#1A1A1A', fg='#FF6B6B').pack(pady=(15, 5))
+    font_family = get_font_family()
+
+    tk.Label(dialog, text='⚠️', font=(font_family, 24), bg='#1A1A1A', fg='#FF6B6B').pack(pady=(15, 5))
     tk.Label(dialog, text=message, bg='#1A1A1A', fg='#FFFFFF', wraplength=300, justify='center').pack(pady=5)
     tk.Button(dialog, text='確定', command=dialog.destroy, bg='#4A4A4A', fg='#FFFFFF',
               relief='flat', padx=20, pady=5).pack(pady=10)
@@ -144,7 +160,9 @@ def show_info(title, message, parent=None, play_sound=True):
     dialog.grab_set()
     _center_on_parent(dialog, parent)
 
-    tk.Label(dialog, text='ℹ️', font=('Arial', 24), bg='#1A1A1A', fg='#4ECDC4').pack(pady=(15, 5))
+    font_family = get_font_family()
+
+    tk.Label(dialog, text='ℹ️', font=(font_family, 24), bg='#1A1A1A', fg='#4ECDC4').pack(pady=(15, 5))
     tk.Label(dialog, text=message, bg='#1A1A1A', fg='#FFFFFF', wraplength=350, justify='center').pack(pady=5)
     tk.Button(dialog, text='確定', command=dialog.destroy, bg='#4A4A4A', fg='#FFFFFF',
               relief='flat', padx=20, pady=5).pack(pady=10)
@@ -167,7 +185,9 @@ def show_warning(title, message, parent=None, play_sound=True):
     dialog.grab_set()
     _center_on_parent(dialog, parent)
 
-    tk.Label(dialog, text='⚡', font=('Arial', 24), bg='#1A1A1A', fg='#FFE66D').pack(pady=(15, 5))
+    font_family = get_font_family()
+
+    tk.Label(dialog, text='⚡', font=(font_family, 24), bg='#1A1A1A', fg='#FFE66D').pack(pady=(15, 5))
     tk.Label(dialog, text=message, bg='#1A1A1A', fg='#FFFFFF', wraplength=300, justify='center').pack(pady=5)
     tk.Button(dialog, text='確定', command=dialog.destroy, bg='#4A4A4A', fg='#FFFFFF',
               relief='flat', padx=20, pady=5).pack(pady=10)

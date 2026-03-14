@@ -238,7 +238,7 @@ class CropCanvas(ttk.Frame):
             text_x, text_y,
             text=dim_text,
             fill='#FFFFFF',
-            font=('Arial', 10, 'bold'),
+            font=('Microsoft JhengHei', 10, 'bold'),
             tags='crop_elements'
         )
 

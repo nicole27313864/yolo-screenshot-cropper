@@ -30,7 +30,8 @@ class Settings:
         'crop_width': 640,
         'crop_height': 640,
         'notification_sound': True,
-        'video_hardware_acceleration': False
+        'video_hardware_acceleration': False,
+        'font_family': 'Microsoft JhengHei'
     }
 
     def __init__(self):
@@ -76,7 +77,11 @@ class YOLOCropApp:
         else:
             self.root = tk.Tk()
         self.root.title('YOLO 螢幕截圖裁剪工具')
-        self.root.geometry('1200x800')
+
+        # 讀取窗口大小設置
+        window_width = self.settings.get('window_width', 1200)
+        window_height = self.settings.get('window_height', 800)
+        self.root.geometry(f'{window_width}x{window_height}')
         self.root.minsize(800, 600)
 
         self.current_image_path = None
@@ -689,8 +694,8 @@ class YOLOCropApp:
     def show_settings(self):
         settings_window = tk.Toplevel(self.root)
         settings_window.title('設定')
-        settings_window.geometry('400x550')
-        self._center_window(settings_window, 400, 550)
+        settings_window.geometry('400x700')
+        self._center_window(settings_window, 400, 700)
         settings_window.configure(bg='#1A1A1A')
         settings_window.transient(self.root)
         settings_window.grab_set()
@@ -715,7 +720,7 @@ class YOLOCropApp:
         format_var = tk.StringVar(value=self.settings.get('auto_naming_format', '%y-%m-%d %h %n %s'))
         format_entry = tk.Entry(frame, textvariable=format_var, width=30, bg='#3B3B3B', fg='#FFFFFF', insertbackground='#FFFFFF')
         format_entry.pack(anchor=tk.W, pady=5)
-        tk.Label(frame, text='格式說明: %y=年 %m=月 %d=日 %h=時 %n=分 %s=秒', bg='#1A1A1A', fg='#A0A0A0', font=('Arial', 8)).pack(anchor=tk.W)
+        tk.Label(frame, text='格式說明: %y=年 %m=月 %d=日 %h=時 %n=分 %s=秒', bg='#1A1A1A', fg='#A0A0A0', font=('Microsoft JhengHei', 8)).pack(anchor=tk.W)
 
         dont_ask_var = tk.BooleanVar(value=self.settings.get('dont_ask_overwrite', False))
         dont_ask_check = tk.Checkbutton(
@@ -755,7 +760,7 @@ class YOLOCropApp:
             activeforeground='#FFFFFF'
         )
         hw_accel_check.pack(anchor=tk.W, pady=10)
-        tk.Label(frame, text='建議: 大影片開啟可提升效能，小影片建議關閉', bg='#1A1A1A', fg='#A0A0A0', font=('Arial', 8)).pack(anchor=tk.W)
+        tk.Label(frame, text='建議: 大影片開啟可提升效能，小影片建議關閉', bg='#1A1A1A', fg='#A0A0A0', font=('Microsoft JhengHei', 8)).pack(anchor=tk.W)
 
         tk.Label(frame, text='預設裁剪尺寸:', bg='#1A1A1A', fg='#FFFFFF').pack(anchor=tk.W, pady=(15, 5))
 
@@ -772,6 +777,36 @@ class YOLOCropApp:
         default_height_entry = tk.Entry(default_size_frame, textvariable=default_height_var, width=8, bg='#3B3B3B', fg='#FFFFFF', insertbackground='#FFFFFF')
         default_height_entry.pack(side=tk.LEFT, padx=5)
 
+        # 字體設置
+        tk.Label(frame, text='字體:', bg='#1A1A1A', fg='#FFFFFF').pack(anchor=tk.W, pady=(15, 5))
+
+        font_frame = tk.Frame(frame, bg='#1A1A1A')
+        font_frame.pack(anchor=tk.W, pady=5)
+
+        # 可用字體列表
+        available_fonts = ['Microsoft JhengHei', 'Arial', 'Segoe UI', 'Tahoma', 'Verdana', 'Times New Roman', 'Courier New']
+        font_var = tk.StringVar(value=self.settings.get('font_family', 'Microsoft JhengHei'))
+
+        font_combo = ttk.Combobox(font_frame, textvariable=font_var, values=available_fonts, state='readonly', width=20)
+        font_combo.pack(side=tk.LEFT)
+
+        # 窗口大小設置
+        tk.Label(frame, text='窗口大小:', bg='#1A1A1A', fg='#FFFFFF').pack(anchor=tk.W, pady=(15, 5))
+
+        size_frame = tk.Frame(frame, bg='#1A1A1A')
+        size_frame.pack(anchor=tk.W, pady=5)
+
+        window_width_var = tk.StringVar(value=str(self.settings.get('window_width', 1200)))
+        window_height_var = tk.StringVar(value=str(self.settings.get('window_height', 800)))
+
+        tk.Label(size_frame, text='寬:', bg='#1A1A1A', fg='#FFFFFF').pack(side=tk.LEFT)
+        width_spin = tk.Spinbox(size_frame, from_=800, to=3840, textvariable=window_width_var, width=8)
+        width_spin.pack(side=tk.LEFT, padx=5)
+
+        tk.Label(size_frame, text='高:', bg='#1A1A1A', fg='#FFFFFF').pack(side=tk.LEFT, padx=(15, 0))
+        height_spin = tk.Spinbox(size_frame, from_=600, to=2160, textvariable=window_height_var, width=8)
+        height_spin.pack(side=tk.LEFT, padx=5)
+
         def save_settings():
             old_hw_accel = self.settings.get('video_hardware_acceleration', False)
             new_hw_accel = hw_accel_var.get()
@@ -786,6 +821,17 @@ class YOLOCropApp:
                 self.settings.set('crop_height', int(default_height_var.get()))
             except ValueError:
                 pass
+
+            self.settings.set('font_family', font_var.get())
+
+            # 保存窗口大小
+            try:
+                self.settings.set('window_width', int(window_width_var.get()))
+                self.settings.set('window_height', int(window_height_var.get()))
+                self.root.geometry(f"{window_width_var.get()}x{window_height_var.get()}")
+            except ValueError:
+                pass
+
             self._load_settings_to_ui()
             settings_window.destroy()
 
@@ -1857,6 +1903,26 @@ class YOLOCropApp:
 
 
 def main():
+    # 設置默認字體
+    import tkinter.font as tkfont
+    import json
+    
+    root = tk.Tk()
+    
+    # 嘗試從設置文件中讀取字體設置
+    font_family = 'Microsoft JhengHei'  # 默認字體
+    try:
+        if os.path.exists('yolo_cropper_settings.json'):
+            with open('yolo_cropper_settings.json', 'r', encoding='utf-8') as f:
+                settings = json.load(f)
+                font_family = settings.get('font_family', 'Microsoft JhengHei')
+    except:
+        pass
+    
+    default_font = tkfont.nametofont("TkDefaultFont")
+    default_font.configure(family=font_family, size=10)
+    root.destroy()
+    
     app = YOLOCropApp()
     app.run()
 
