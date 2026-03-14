@@ -1019,6 +1019,14 @@ class YOLOCropApp:
         # 隱藏影片控制項
         self._hide_video_controls()
 
+        # 恢復導航按鈕顯示
+        if self.btn_prev:
+            self.btn_prev.pack(side=tk.LEFT, padx=5)
+        if self.nav_label:
+            self.nav_label.pack(side=tk.LEFT, padx=5)
+        if self.btn_next:
+            self.btn_next.pack(side=tk.LEFT, padx=5)
+
         # 恢復圖片畫布的圖片顯示
         if self.current_image_path and os.path.exists(self.current_image_path):
             # 如果之前有載入過圖片，重新顯示
