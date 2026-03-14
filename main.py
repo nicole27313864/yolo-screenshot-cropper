@@ -211,6 +211,20 @@ class YOLOCropApp:
         )
         self.btn_open_video.pack(side=tk.LEFT, padx=5)
 
+        self.btn_close_video = tk.Button(
+            self.toolbar,
+            text='✕ 退出影片模式',
+            command=self.close_video,
+            bg='#D32F2F',
+            fg='#FFFFFF',
+            relief=tk.FLAT,
+            padx=10,
+            pady=5,
+            cursor='hand2'
+        )
+        self.btn_close_video.pack(side=tk.LEFT, padx=5)
+        self.btn_close_video.pack_forget()  # 預設隱藏
+
         tk.Label(self.toolbar, text='寬度:', bg='#2D2D2D', fg='#FFFFFF').pack(side=tk.LEFT, padx=(20, 5))
 
         self.width_var = tk.StringVar(value=str(self.settings.get('crop_width', 640)))
@@ -983,6 +997,41 @@ class YOLOCropApp:
         self.root.wait_window(dialog)
         return result[0]
 
+    def close_video(self):
+        """關閉影片，切換回圖片模式"""
+        # 停止影片播放
+        self._stop_video_playback()
+
+        # 關閉影片 (both OpenCV and VLC)
+        if self.video_handler:
+            self.video_handler.close()
+            self.video_handler = None
+        if self.vlc_player:
+            self.vlc_player.close()
+            self.vlc_player = None
+
+        self.is_video_mode = False
+
+        # 隱藏影片框架，恢復圖片畫布
+        self.video_frame.pack_forget()
+        self.crop_canvas.pack(fill=tk.BOTH, expand=True)
+
+        # 隱藏影片控制項
+        self._hide_video_controls()
+
+        # 恢復圖片畫布的圖片顯示
+        if self.current_image_path and os.path.exists(self.current_image_path):
+            # 如果之前有載入過圖片，重新顯示
+            pass
+        else:
+            # 清除畫布
+            self.crop_canvas.reset()
+
+        # 顯示圖片導航控制
+        self._update_navigation()
+
+        self._update_status('請載入圖片 (檔案對話框 / Ctrl+O 開啟資料夾 / Ctrl+V 貼上 / 拖放檔案)')
+
     def reset(self):
         # 停止影片播放
         self._stop_video_playback()
@@ -1285,6 +1334,9 @@ class YOLOCropApp:
         if self.video_time_label:
             self.video_time_label.pack(side=tk.LEFT, padx=5)
 
+        # 顯示關閉影片按鈕
+        self.btn_close_video.pack(side=tk.LEFT, padx=5)
+
     def _hide_video_controls(self):
         self.video_control_frame.pack_forget()
 
@@ -1294,6 +1346,9 @@ class YOLOCropApp:
             self.video_slider.config(state='disabled')
         if self.video_time_label:
             self.video_time_label.pack_forget()
+
+        # 隱藏關閉影片按鈕
+        self.btn_close_video.pack_forget()
 
     def _update_video_label(self, is_automatic_update=False):
         # 自動更新 slider 時設置標誌，防止觸發回調
